@@ -1,0 +1,16 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: vaultex-service
+  labels:
+    app: vaultex-storefront
+spec:
+  type: NodePort # Exposes service externally on each Minikube node's IP
+  selector:
+    app: vaultex-storefront
+  ports:
+  - name: http
+    port: 80         # Internal cluster port
+    targetPort: 80   # Port on the container running Nginx
+    nodePort: 30080  # NodePort accessible via Minikube (range 30000-32767)
+

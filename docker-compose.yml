@@ -1,0 +1,136 @@
+# ==============================================================================
+# VAULTEX E-COMMERCE STOREFRONT - PRODUCTION DOCKER COMPOSE SPECIFICATION
+# Architecture: React (Frontend), FastAPI (Backend), PostgreSQL 16 (Database)
+# Gateway: Nginx Reverse Proxy (Port 80 OPEN | Ports 8000 & 5432 PRIVATE)
+# ==============================================================================
+
+services:
+  # ----------------------------------------------------------------------------
+  # 1. NGINX REVERSE PROXY GATEWAY (PUBLIC FACING)
+  # ----------------------------------------------------------------------------
+  # ONLY service with published host ports.
+  # Listens on Port 80 for public internet traffic.
+  # Routes:
+  #   - /api/*       -> backend:8000
+  #   - /docs        -> backend:8000/docs
+  #   - /            -> frontend:80
+  # ----------------------------------------------------------------------------
+  nginx-gateway:
+    build:
+      context: ./nginx
+      dockerfile: Dockerfile
+    container_name: vaultex-nginx-gateway
+    ports:
+      - "${HTTP_PORT:-80}:80"
+    depends_on:
+      - frontend
+      - backend
+    networks:
+      - shop-network
+    restart: always
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost/nginx-health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "20m"
+        max-file: "5"
+
+  # ----------------------------------------------------------------------------
+  # 2. REACT FRONTEND (INTERNAL WEB SERVER)
+  # ----------------------------------------------------------------------------
+  # Multi-stage build running compiled Vite SPA on Nginx Alpine.
+  # INTERNAL ONLY: Port 80 exposed on shop-network; NOT bound to host 0.0.0.0.
+  # ----------------------------------------------------------------------------
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: vaultex-frontend
+    expose:
+      - "80"
+    networks:
+      - shop-network
+    restart: always
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost/"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  # ----------------------------------------------------------------------------
+  # 3. FASTAPI REST BACKEND (APPLICATION SERVER)
+  # ----------------------------------------------------------------------------
+  # Python 3.12 Uvicorn ASGI server with REST API endpoints.
+  # STRICTLY PRIVATE: Port 8000 exposed ONLY inside shop-network.
+  # Unreachable directly from the public internet.
+  # ----------------------------------------------------------------------------
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: vaultex-backend-api
+    environment:
+      - DATABASE_URL=postgresql://${POSTGRES_USER:-shopuser}:${POSTGRES_PASSWORD:-VaultexStrongDbPass2026!}@db:5432/${POSTGRES_DB:-shopdb}
+      - ENVIRONMENT=production
+    expose:
+      - "8000"
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - shop-network
+    restart: always
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+
+  # ----------------------------------------------------------------------------
+  # 4. POSTGRESQL DATABASE (DATA STORE)
+  # ----------------------------------------------------------------------------
+  # Relational database for product catalog, customer orders, and items.
+  # STRICTLY PRIVATE: Port 5432 exposed ONLY inside shop-network.
+  # ZERO external host port binding to protect customer data from external attacks.
+  # ----------------------------------------------------------------------------
+  db:
+    image: postgres:16-alpine
+    container_name: vaultex-postgres-db
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-shopuser}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-VaultexStrongDbPass2026!}
+      POSTGRES_DB: ${POSTGRES_DB:-shopdb}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./database/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    expose:
+      - "5432"
+    networks:
+      - shop-network
+    restart: always
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-shopuser} -d ${POSTGRES_DB:-shopdb}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+
+# ------------------------------------------------------------------------------
+# ISOLATED DOCKER BRIDGE NETWORK
+# ------------------------------------------------------------------------------
+networks:
+  shop-network:
+    driver: bridge
+    name: vaultex-shop-network
+
+# ------------------------------------------------------------------------------
+# PERSISTENT STORAGE VOLUMES
+# ------------------------------------------------------------------------------
+volumes:
+  postgres_data:
+    name: vaultex-postgres-data

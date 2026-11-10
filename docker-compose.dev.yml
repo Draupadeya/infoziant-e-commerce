@@ -1,0 +1,51 @@
+# Development Docker Compose file for local workstation debugging
+services:
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    ports:
+      - "5173:80"
+    networks:
+      - shop-network
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    environment:
+      - DATABASE_URL=postgresql://${POSTGRES_USER:-shopuser}:${POSTGRES_PASSWORD:-SecridStrongDbPassword2026!}@db:5432/${POSTGRES_DB:-shopdb}
+      - ENVIRONMENT=development
+    ports:
+      - "8000:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - shop-network
+
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-shopuser}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-SecridStrongDbPassword2026!}
+      POSTGRES_DB: ${POSTGRES_DB:-shopdb}
+    ports:
+      - "5432:5432"
+    volumes:
+      - dev_postgres_data:/var/lib/postgresql/data
+      - ./database/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-shopuser} -d ${POSTGRES_DB:-shopdb}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - shop-network
+
+networks:
+  shop-network:
+    driver: bridge
+
+volumes:
+  dev_postgres_data:
